@@ -99,20 +99,18 @@ class memoize:
       return self.memoized[args]
 
 def format_owner(identities):
-    preferred_keys = ('LOCAL_USER', 'NFS_UID')
+    preferred_keys = ('LOCAL_USER', 'NFS_UID', 'SMB_SID')
     for key in preferred_keys:
         for el in identities:
             if el['id_type'] == key:
-                try:
-                    userid = pwd.getpwuid(int(el["id_value"])).pw_name
-                except:
-                    userid = el["id_value"]
+                userid = el["id_value"]
                 return el["id_type"] + ":" + userid
-    return "ERROR"
+    return None
 
 @memoize
 def translate_owner_to_owner_string(cli, owner):
-    return format_owner(cli.auth.auth_id_to_all_related_identities(owner))
+    idents = cli.auth.auth_id_to_all_related_identities(owner)
+    return format_owner(idents)
 
 seen = {}
 def get_file_attrs(x):
@@ -125,7 +123,10 @@ def get_file_attrs(x):
             result += [seen[path]]
             continue
         owner_id = client.fs.get_file_attr(path)["owner"]
+        owner_details = client.fs.get_file_attr(path)["owner_details"]
         str_owner = translate_owner_to_owner_string(client, owner_id)
+        if not str_owner:
+            str_owner = "%s:%s" % (owner_details['id_type'], owner_details['id_value'])
         seen[path] = str_owner
         result.append(str_owner)
     return result
