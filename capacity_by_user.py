@@ -98,19 +98,42 @@ class memoize:
       self.memoized[args] = self.function(*args)
       return self.memoized[args]
 
-def format_owner(identities):
-    preferred_keys = ('LOCAL_USER', 'NFS_UID', 'SMB_SID')
-    for key in preferred_keys:
-        for el in identities:
-            if el['id_type'] == key:
-                userid = el["id_value"]
-                return el["id_type"] + ":" + userid
+def sid_to_username(client, idents):
+    """Returns a username for a Active Directory SID"""
+    for el in idents:
+        if el['id_type'] == 'SMB_SID':
+            smb_user = el['id_value']
+            try:
+                entry = client.ad.sid_to_ad_account(smb_user)
+                # We're only interested in returning a result if there is matching user class
+                if "user" in entry['classes']:
+                    user_id = client.ad.sid_to_ad_account(smb_user)['name']
+                    return "AD_USER:%s" % (user_id)
+                else:
+                    next
+            except:
+                next
     return None
 
 @memoize
-def translate_owner_to_owner_string(cli, owner):
-    idents = cli.auth.auth_id_to_all_related_identities(owner)
-    return format_owner(idents)
+def enumerate_owner(client, path):
+    owner = client.fs.get_file_attr(path)["owner"]
+    owner_details = client.fs.get_file_attr(path)["owner_details"]
+    owner_type = owner_details['id_type']
+    owner_id = owner_details['id_value']
+    idents = client.auth.auth_id_to_all_related_identities(owner)
+    user_id = sid_to_username(client, idents)
+    if user_id:
+        return user_id
+    for el in idents:
+        ident = el
+        if el['id_type'] == 'LOCAL_USER':
+            return "%s:%s" % (el['id_type'], el['id_value'])
+    for el in idents:
+        if el['id_type'] == 'NFS_UID':
+            return "%s:%s" % (el['id_type'], owner_id)
+
+    return "%s:%s" % (owner_type, owner_id)
 
 seen = {}
 def get_file_attrs(x):
@@ -122,11 +145,7 @@ def get_file_attrs(x):
         if seen.has_key(path):
             result += [seen[path]]
             continue
-        owner_id = client.fs.get_file_attr(path)["owner"]
-        owner_details = client.fs.get_file_attr(path)["owner_details"]
-        str_owner = translate_owner_to_owner_string(client, owner_id)
-        if not str_owner:
-            str_owner = "%s:%s" % (owner_details['id_type'], owner_details['id_value'])
+        str_owner = enumerate_owner(client, path)
         seen[path] = str_owner
         result.append(str_owner)
     return result
